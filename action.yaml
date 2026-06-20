@@ -26,6 +26,13 @@ inputs:
     description: 'Maximum number of changed files to review per PR (bounds API cost)'
     required: false
     default: '50'
+  enable-cross-file-context:
+    description: >-
+      Include excerpts of related files (detected via import/include statements) as extra
+      context for Claude. Sends more file content per review than diffs alone; set to 'false'
+      for privacy-sensitive private repos that want to limit what leaves the org boundary.
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -47,5 +54,6 @@ runs:
         INPUT_MODEL: ${{ inputs.model }}
         INPUT_MAX_DIFF_CHARS: ${{ inputs.max-diff-chars }}
         INPUT_MAX_FILES: ${{ inputs.max-files }}
+        INPUT_ENABLE_CROSS_FILE_CONTEXT: ${{ inputs.enable-cross-file-context }}
         PYTHONPATH: ${{ github.action_path }}/src
       run: python -m ai_pr_reviewer

@@ -6,9 +6,25 @@ AI-powered GitHub Action that reviews pull request diffs using the [Claude API](
 
 On a pull request event, the action:
 1. Fetches the PR's changed files and unified diffs via the GitHub REST API.
-2. Sends each file's diff to Claude with a review prompt, asking for structured JSON feedback.
-3. Filters suggestions to lines that are actually part of the diff.
-4. Posts a single GitHub PR review with inline comments and a summary.
+2. For each file, scans its diff for import/include statements and, if any match another file
+   already in the same PR's changed-file list, reads a capped excerpt of that related file from
+   the local checkout to give Claude cross-file context (see "Cross-file context" below).
+3. Sends each file's diff — plus any related-file excerpts — to Claude with a review prompt,
+   asking for structured JSON feedback.
+4. Filters suggestions to lines that are actually part of the diff.
+5. Posts a single GitHub PR review with inline comments and a summary.
+
+### Cross-file context
+
+Beyond a file's own diff, the action looks for import/include statements (Python, JS/TS, Java,
+C/C++) and matches them against other files already changed in the *same* PR — never an arbitrary
+repo-wide file index, so the only files ever read are ones the PR author already controls and can
+already see in their own diff. Matches are capped at 3 related files and 2000 characters each.
+
+This sends more file content to Claude (a third party) than diffs alone — up to 6000 extra
+characters of related-file content per review, beyond what each file's own diff hunks expose. For
+privacy-sensitive private repos, set `enable-cross-file-context: 'false'` to disable this and only
+ever send diff hunks.
 
 ## Usage
 
@@ -50,6 +66,7 @@ Add `ANTHROPIC_API_KEY` as a repository secret (Settings → Secrets and variabl
 | `model` | no | `claude-sonnet-4-6` | Claude model to use |
 | `max-diff-chars` | no | `12000` | Max diff characters sent to Claude per file |
 | `max-files` | no | `50` | Max changed files reviewed per PR (bounds API cost) |
+| `enable-cross-file-context` | no | `true` | Include related-file excerpts as extra context (see above) |
 
 ## Security notes
 
@@ -80,6 +97,7 @@ pytest --cov=ai_pr_reviewer --cov-report=term-missing
 src/ai_pr_reviewer/
   config.py          # env/event-payload parsing
   diff_parser.py      # unified diff -> line-numbered FileDiff
+  context_finder.py   # finds related files in the same PR for cross-file context
   github_client.py    # GitHub REST API: fetch PR files, post review
   claude_client.py    # Claude API call + structured response parsing
   review_engine.py    # orchestrates the end-to-end review

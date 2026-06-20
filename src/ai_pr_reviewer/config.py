@@ -25,6 +25,8 @@ class Config:
     model: str
     max_diff_chars: int
     max_files: int
+    workspace_root: str
+    enable_cross_file_context: bool
 
 
 def _require_env(name: str) -> str:
@@ -42,6 +44,13 @@ def _parse_int_env(name: str, default: int) -> int:
         return int(raw)
     except ValueError as exc:
         raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def _parse_bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    return raw.strip().lower() not in ("false", "0", "no")
 
 
 def _load_pull_request_event(event_path: str) -> dict:
@@ -94,4 +103,6 @@ def load_config() -> Config:
         model=os.environ.get("INPUT_MODEL") or DEFAULT_MODEL,
         max_diff_chars=_parse_int_env("INPUT_MAX_DIFF_CHARS", DEFAULT_MAX_DIFF_CHARS),
         max_files=_parse_int_env("INPUT_MAX_FILES", DEFAULT_MAX_FILES),
+        workspace_root=os.environ.get("GITHUB_WORKSPACE") or ".",
+        enable_cross_file_context=_parse_bool_env("INPUT_ENABLE_CROSS_FILE_CONTEXT", True),
     )

@@ -21,7 +21,7 @@ class _FakeGitHubClient:
         return {"id": 1}
 
 
-def _config(max_diff_chars=12000, max_files=50):
+def _config(max_diff_chars=12000, max_files=50, workspace_root=".", enable_cross_file_context=True):
     return Config(
         github_token="gh-token",
         anthropic_api_key="anthropic-key",
@@ -33,6 +33,8 @@ def _config(max_diff_chars=12000, max_files=50):
         model="claude-sonnet-4-6",
         max_diff_chars=max_diff_chars,
         max_files=max_files,
+        workspace_root=workspace_root,
+        enable_cross_file_context=enable_cross_file_context,
     )
 
 
@@ -43,7 +45,7 @@ def test_run_review_posts_comments_from_multiple_files():
     ]
     github_client = _FakeGitHubClient(files)
 
-    def review_fn(filename, diff_text):
+    def review_fn(filename, diff_text, related_files):
         return [ReviewSuggestion(line=2, severity="medium", comment=f"Issue in {filename}")]
 
     result = run_review(_config(), github_client, review_fn)
@@ -60,7 +62,7 @@ def test_run_review_skips_files_without_patch():
     files = [{"filename": "image.png", "status": "modified", "patch": None}]
     github_client = _FakeGitHubClient(files)
 
-    result = run_review(_config(), github_client, lambda filename, diff_text: [])
+    result = run_review(_config(), github_client, lambda filename, diff_text, related_files: [])
 
     assert result.files_reviewed == 0
     assert result.comments_posted == 0
@@ -71,7 +73,7 @@ def test_run_review_filters_suggestions_outside_diff():
     files = [{"filename": "a.py", "status": "modified", "patch": "@@ -1,1 +1,2 @@\n line1\n+added"}]
     github_client = _FakeGitHubClient(files)
 
-    def review_fn(filename, diff_text):
+    def review_fn(filename, diff_text, related_files):
         return [
             ReviewSuggestion(line=2, severity="medium", comment="valid, on added line"),
             ReviewSuggestion(line=999, severity="medium", comment="invalid, not in diff"),
@@ -92,7 +94,7 @@ def test_run_review_continues_when_one_file_review_fails():
     ]
     github_client = _FakeGitHubClient(files)
 
-    def review_fn(filename, diff_text):
+    def review_fn(filename, diff_text, related_files):
         if filename == "broken.py":
             raise ClaudeReviewError("bad response")
         return [ReviewSuggestion(line=2, severity="low", comment="fine")]
@@ -109,7 +111,7 @@ def test_run_review_posts_no_issues_summary_when_no_comments():
     files = [{"filename": "a.py", "status": "modified", "patch": "@@ -1,1 +1,2 @@\n line1\n+added"}]
     github_client = _FakeGitHubClient(files)
 
-    result = run_review(_config(), github_client, lambda filename, diff_text: [])
+    result = run_review(_config(), github_client, lambda filename, diff_text, related_files: [])
 
     assert result.comments_posted == 0
     [call] = github_client.post_review_calls
@@ -119,7 +121,7 @@ def test_run_review_posts_no_issues_summary_when_no_comments():
 def test_run_review_skips_posting_when_no_files_changed():
     github_client = _FakeGitHubClient([])
 
-    result = run_review(_config(), github_client, lambda filename, diff_text: [])
+    result = run_review(_config(), github_client, lambda filename, diff_text, related_files: [])
 
     assert result == type(result)(files_reviewed=0, comments_posted=0)
     assert github_client.post_review_calls == []
@@ -131,7 +133,7 @@ def test_run_review_truncates_diff_to_max_chars():
     github_client = _FakeGitHubClient(files)
     seen = {}
 
-    def review_fn(filename, diff_text):
+    def review_fn(filename, diff_text, related_files):
         seen["diff_text"] = diff_text
         return []
 
@@ -147,7 +149,10 @@ def test_run_review_caps_files_reviewed_at_max_files():
     ]
     github_client = _FakeGitHubClient(files)
 
-    result = run_review(_config(max_files=2), github_client, lambda filename, diff_text: [])
+    def no_op_review_fn(filename, diff_text, related_files):
+        return []
+
+    result = run_review(_config(max_files=2), github_client, no_op_review_fn)
 
     assert result.files_reviewed == 2
 
@@ -157,7 +162,7 @@ def test_run_review_logs_warning_when_file_review_fails(capsys):
     files = [{"filename": "broken.py", "status": "modified", "patch": patch_text}]
     github_client = _FakeGitHubClient(files)
 
-    def review_fn(filename, diff_text):
+    def review_fn(filename, diff_text, related_files):
         raise ClaudeReviewError("bad response")
 
     run_review(_config(), github_client, review_fn)
@@ -167,11 +172,62 @@ def test_run_review_logs_warning_when_file_review_fails(capsys):
     assert "::warning::" in captured.err
 
 
+def test_run_review_passes_related_files_to_review_fn(tmp_path):
+    (tmp_path / "config.py").write_text("class Config:\n    pass\n")
+    files = [
+        {
+            "filename": "main.py",
+            "status": "modified",
+            "patch": "@@ -1,1 +1,2 @@\n line1\n+from config import Config",
+        },
+        {"filename": "config.py", "status": "modified", "patch": "@@ -1,1 +1,2 @@\n line1\n+x"},
+    ]
+    github_client = _FakeGitHubClient(files)
+    seen = {}
+
+    def review_fn(filename, diff_text, related_files):
+        if filename == "main.py":
+            seen["related_files"] = related_files
+        return []
+
+    run_review(_config(workspace_root=str(tmp_path)), github_client, review_fn)
+
+    assert len(seen["related_files"]) == 1
+    assert seen["related_files"][0].filename == "config.py"
+
+
+def test_run_review_skips_cross_file_context_when_disabled(tmp_path):
+    (tmp_path / "config.py").write_text("class Config:\n    pass\n")
+    files = [
+        {
+            "filename": "main.py",
+            "status": "modified",
+            "patch": "@@ -1,1 +1,2 @@\n line1\n+from config import Config",
+        },
+        {"filename": "config.py", "status": "modified", "patch": "@@ -1,1 +1,2 @@\n line1\n+x"},
+    ]
+    github_client = _FakeGitHubClient(files)
+    seen = {}
+
+    def review_fn(filename, diff_text, related_files):
+        if filename == "main.py":
+            seen["related_files"] = related_files
+        return []
+
+    run_review(
+        _config(workspace_root=str(tmp_path), enable_cross_file_context=False),
+        github_client,
+        review_fn,
+    )
+
+    assert seen["related_files"] == []
+
+
 def test_run_review_summary_includes_ai_disclaimer():
     files = [{"filename": "a.py", "status": "modified", "patch": "@@ -1,1 +1,2 @@\n line1\n+added"}]
     github_client = _FakeGitHubClient(files)
 
-    run_review(_config(), github_client, lambda filename, diff_text: [])
+    run_review(_config(), github_client, lambda filename, diff_text, related_files: [])
 
     [call] = github_client.post_review_calls
     assert "ai-generated" in call["summary"].lower()

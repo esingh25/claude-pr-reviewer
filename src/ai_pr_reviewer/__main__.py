@@ -6,6 +6,7 @@ import anthropic
 
 from ai_pr_reviewer.claude_client import review_file_diff
 from ai_pr_reviewer.config import ConfigError, load_config
+from ai_pr_reviewer.context_finder import RelatedFile
 from ai_pr_reviewer.github_client import GitHubClient, GitHubClientError
 from ai_pr_reviewer.review_engine import run_review
 
@@ -20,8 +21,10 @@ def main() -> int:
     github_client = GitHubClient(config.github_token, config.repo_owner, config.repo_name)
     anthropic_client = anthropic.Anthropic(api_key=config.anthropic_api_key)
 
-    def review_fn(filename: str, diff_text: str):
-        return review_file_diff(anthropic_client, config.model, filename, diff_text)
+    def review_fn(filename: str, diff_text: str, related_files: list[RelatedFile]):
+        return review_file_diff(
+            anthropic_client, config.model, filename, diff_text, related_files=related_files
+        )
 
     try:
         result = run_review(config, github_client, review_fn)

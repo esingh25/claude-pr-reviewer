@@ -3,6 +3,7 @@ import json
 import pytest
 
 from ai_pr_reviewer.claude_client import ClaudeReviewError, ReviewSuggestion, review_file_diff
+from ai_pr_reviewer.context_finder import RelatedFile
 
 
 class _FakeContentBlock:
@@ -196,6 +197,38 @@ def test_review_file_diff_neutralizes_at_mentions_and_issue_refs():
     assert "#123" not in comment
     assert "someone" in comment
     assert "123" in comment
+
+
+def test_review_file_diff_includes_related_files_in_prompt():
+    client = _FakeClient(json.dumps({"comments": []}))
+    related = [RelatedFile(filename="config.py", excerpt="class Config:\n    pass")]
+
+    review_file_diff(
+        client,
+        model="claude-sonnet-4-6",
+        filename="main.py",
+        diff_text="diff",
+        related_files=related,
+    )
+
+    prompt = client.messages.create_kwargs["messages"][0]["content"]
+    assert "config.py" in prompt
+    assert "class Config" in prompt
+
+
+def test_review_file_diff_omits_related_section_when_none_given():
+    client = _FakeClient(json.dumps({"comments": []}))
+
+    review_file_diff(client, model="claude-sonnet-4-6", filename="main.py", diff_text="diff")
+
+    prompt = client.messages.create_kwargs["messages"][0]["content"]
+    assert "Related file" not in prompt
+
+
+def test_system_prompt_treats_related_files_as_untrusted_too():
+    from ai_pr_reviewer.claude_client import SYSTEM_PROMPT
+
+    assert "related file" in SYSTEM_PROMPT.lower()
 
 
 def test_review_file_diff_leaves_plain_text_untouched():

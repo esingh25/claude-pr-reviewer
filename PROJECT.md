@@ -12,35 +12,38 @@ The core technical challenges that follow from that: handling large codebases wi
 cost/latency, understanding context that spans multiple files, and producing suggestions specific
 enough to a given team's standards to actually be worth reading.
 
-## Current state — Phase 1 (shipped)
+## Current state — Phases 1 & 2 (shipped)
 
 Live today at `esingh25/claude-pr-reviewer`:
 - Composite GitHub Action, Python 3.11, triggered on `pull_request` events.
-- Calls the base Claude API (`claude-sonnet-4-6` by default) per changed file — no fine-tuning,
-  no cross-file context beyond the single file's diff.
+- Calls the base Claude API (`claude-sonnet-4-6` by default) per changed file — no fine-tuning
+  (confirmed unavailable for Claude via self-serve API, see Phase 5 below).
+- **Cross-file context (Phase 2):** scans each file's diff for import/include statements
+  (Python/JS/TS/Java/C/C++) and, on a match against another file already in the same PR, reads a
+  capped excerpt of that file from the local checkout to give Claude extra context — opt-out via
+  `enable-cross-file-context: 'false'` for privacy-sensitive repos.
 - GitHub only (REST API for fetching diffs and posting inline review comments).
 - No persistence — each run is stateless; nothing is tracked over time.
-- Hardened for production use: prompt-injection-resistant system prompt, `@mention`/`#ref`
-  sanitization on posted comments, capped file/comment counts, strict validation of Claude's
-  JSON response shape, 99% test coverage, clean lint, CI green. See `README.md` for usage and
+- Hardened for production use: prompt-injection-resistant system prompt (covers both diff and
+  related-file content), `@mention`/`#ref` sanitization on posted comments, capped file/comment
+  counts, strict validation of Claude's JSON response shape, symlink-aware path-traversal guard on
+  related-file reads, 76 tests / 99% coverage, clean lint, CI green. See `README.md` for usage and
   security notes.
 
-This phase already covers "flagging issues" and "understanding context" at the single-file level.
-Everything below is what's needed to reach the fuller vision.
+These phases cover "flagging issues" and "understanding context across multiple files" within a
+single PR. Everything below is what's needed to reach the fuller vision.
 
 ## Roadmap
 
 Phases are sequenced by engineering dependency and infrastructure cost, not by how they were
 originally pitched.
 
-### Phase 2 — Cross-file context-aware review
+### Phase 2 — Cross-file context-aware review ✅ shipped
 
 Directly addresses "understanding context across multiple files" and "not generic suggestions."
-Extend `review_engine.py`/`claude_client.py` so that, before prompting Claude on a file's diff, the
-action also pulls in directly related files (e.g. files that import the changed file, or files it
-imports) and includes relevant excerpts as extra context. No new infrastructure — pure extension
-of the existing GitHub Action. Sequenced first because it's the highest-leverage quality
-improvement available with zero new infra cost.
+Implemented as `context_finder.py`: scans a file's diff for import/include statements and matches
+them (by basename) against other files already changed in the same PR, reading capped excerpts
+from the local checkout. No new infrastructure — pure extension of the existing GitHub Action.
 
 ### Phase 3 — Quality metrics tracking
 

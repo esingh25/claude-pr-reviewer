@@ -28,6 +28,7 @@ def base_env(monkeypatch, event_file):
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_file))
     monkeypatch.delenv("INPUT_MODEL", raising=False)
     monkeypatch.delenv("INPUT_MAX_DIFF_CHARS", raising=False)
+    monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
 
 
 def test_load_config_parses_required_fields(base_env):
@@ -60,6 +61,34 @@ def test_load_config_honors_input_overrides(base_env, monkeypatch):
     assert config.model == "claude-opus-4-8"
     assert config.max_diff_chars == 5000
     assert config.max_files == 10
+
+
+def test_load_config_defaults_cross_file_context_to_enabled(base_env):
+    config = load_config()
+
+    assert config.enable_cross_file_context is True
+
+
+def test_load_config_honors_disabling_cross_file_context(base_env, monkeypatch):
+    monkeypatch.setenv("INPUT_ENABLE_CROSS_FILE_CONTEXT", "false")
+
+    config = load_config()
+
+    assert config.enable_cross_file_context is False
+
+
+def test_load_config_defaults_workspace_root_to_dot(base_env):
+    config = load_config()
+
+    assert config.workspace_root == "."
+
+
+def test_load_config_uses_github_workspace_env_var(base_env, monkeypatch, tmp_path):
+    monkeypatch.setenv("GITHUB_WORKSPACE", str(tmp_path))
+
+    config = load_config()
+
+    assert config.workspace_root == str(tmp_path)
 
 
 def test_load_config_raises_when_max_diff_chars_not_integer(base_env, monkeypatch):
