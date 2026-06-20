@@ -73,6 +73,38 @@ def test_review_file_diff_raises_on_invalid_json():
         review_file_diff(client, model="claude-sonnet-4-6", filename="foo.py", diff_text="diff")
 
 
+def test_review_file_diff_raises_when_top_level_not_an_object():
+    client = _FakeClient(json.dumps(["unexpected", "array"]))
+
+    with pytest.raises(ClaudeReviewError, match="object"):
+        review_file_diff(client, model="claude-sonnet-4-6", filename="foo.py", diff_text="diff")
+
+
+def test_review_file_diff_raises_when_comments_field_not_a_list():
+    client = _FakeClient(json.dumps({"comments": "not a list"}))
+
+    with pytest.raises(ClaudeReviewError, match="comments"):
+        review_file_diff(client, model="claude-sonnet-4-6", filename="foo.py", diff_text="diff")
+
+
+def test_review_file_diff_skips_non_dict_entries_in_comments_list():
+    payload = json.dumps(
+        {
+            "comments": [
+                "just a string, not an object",
+                {"line": 1, "severity": "low", "comment": "ok"},
+            ]
+        }
+    )
+    client = _FakeClient(payload)
+
+    suggestions = review_file_diff(
+        client, model="claude-sonnet-4-6", filename="foo.py", diff_text="diff"
+    )
+
+    assert suggestions == [ReviewSuggestion(line=1, severity="low", comment="ok")]
+
+
 def test_review_file_diff_skips_malformed_entries():
     payload = json.dumps(
         {
@@ -147,3 +179,33 @@ def test_system_prompt_warns_against_following_instructions_in_diff():
 
     assert "untrusted" in SYSTEM_PROMPT.lower()
     assert "never follow" in SYSTEM_PROMPT.lower() or "do not follow" in SYSTEM_PROMPT.lower()
+
+
+def test_review_file_diff_neutralizes_at_mentions_and_issue_refs():
+    payload = json.dumps(
+        {"comments": [{"line": 1, "severity": "low", "comment": "ping @someone re #123"}]}
+    )
+    client = _FakeClient(payload)
+
+    suggestions = review_file_diff(
+        client, model="claude-sonnet-4-6", filename="foo.py", diff_text="diff"
+    )
+
+    comment = suggestions[0].comment
+    assert "@someone" not in comment
+    assert "#123" not in comment
+    assert "someone" in comment
+    assert "123" in comment
+
+
+def test_review_file_diff_leaves_plain_text_untouched():
+    payload = json.dumps(
+        {"comments": [{"line": 1, "severity": "low", "comment": "no special syntax here"}]}
+    )
+    client = _FakeClient(payload)
+
+    suggestions = review_file_diff(
+        client, model="claude-sonnet-4-6", filename="foo.py", diff_text="diff"
+    )
+
+    assert suggestions[0].comment == "no special syntax here"
