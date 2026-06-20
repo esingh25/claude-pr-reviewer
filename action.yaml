@@ -1,0 +1,51 @@
+name: 'Claude PR Reviewer'
+description: 'AI-powered pull request review using the Claude API'
+author: 'esingh25'
+
+branding:
+  icon: 'check-circle'
+  color: 'purple'
+
+inputs:
+  anthropic-api-key:
+    description: 'Anthropic API key used to call Claude'
+    required: true
+  github-token:
+    description: 'Token used to fetch PR diffs and post review comments'
+    required: false
+    default: ${{ github.token }}
+  model:
+    description: 'Claude model to use for review'
+    required: false
+    default: 'claude-sonnet-4-6'
+  max-diff-chars:
+    description: 'Maximum diff characters sent to Claude per file'
+    required: false
+    default: '12000'
+  max-files:
+    description: 'Maximum number of changed files to review per PR (bounds API cost)'
+    required: false
+    default: '50'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: bash
+      run: pip install -r "${{ github.action_path }}/requirements.txt"
+
+    - name: Run Claude PR review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_MAX_DIFF_CHARS: ${{ inputs.max-diff-chars }}
+        INPUT_MAX_FILES: ${{ inputs.max-files }}
+        PYTHONPATH: ${{ github.action_path }}/src
+      run: python -m ai_pr_reviewer
