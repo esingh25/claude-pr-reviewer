@@ -1,21 +1,23 @@
 # Claude PR Reviewer
 
 AI-powered pull/merge request reviewer using the [Claude API](https://docs.anthropic.com/). Ships
-as a GitHub Action and, as of this version, also as a pip-installable CLI for GitLab CI (note:
-the CLI is built and tested locally but **not yet published to PyPI** — see "GitLab CI" below).
+as a GitHub Action and, as of this version, also as a pip-installable CLI for GitLab CI or
+Bitbucket Pipelines (note: the CLI is built and tested locally but **not yet published to PyPI**
+— see "GitLab CI" / "Bitbucket Pipelines" below).
 
 ## How it works
 
 On a pull/merge request event, the tool:
-1. Fetches the PR/MR's changed files and unified diffs via the GitHub or GitLab REST API.
+1. Fetches the PR/MR's changed files and unified diffs via the GitHub, GitLab, or Bitbucket REST
+   API.
 2. For each file, scans its diff for import/include statements and, if any match another file
    already in the same PR's changed-file list, reads a capped excerpt of that related file from
    the local checkout to give Claude cross-file context (see "Cross-file context" below).
 3. Sends each file's diff — plus any related-file excerpts — to Claude with a review prompt,
    asking for structured JSON feedback.
 4. Filters suggestions to lines that are actually part of the diff.
-5. Posts a single review with inline comments and a summary (a GitHub PR review, or a GitLab MR
-   note + discussion threads).
+5. Posts a single review with inline comments and a summary (a GitHub PR review, a GitLab MR
+   note + discussion threads, or a Bitbucket PR comment + inline comments).
 
 ### Cross-file context
 
@@ -127,6 +129,35 @@ GitLab's discussion API needs `old_line`/`new_line` set differently depending on
 comment lands on an added or an unchanged context line; this is handled correctly for both cases
 via `diff_parser.FileDiff.old_lineno_for()`.
 
+## Bitbucket Pipelines
+
+Also installable as a CLI for Bitbucket Cloud pull requests (Bitbucket Server/Data Center is not
+supported — different product, different API). Not published to PyPI; install from this repo:
+
+```yaml
+# bitbucket-pipelines.yml
+pipelines:
+  pull-requests:
+    '**':
+      - step:
+          name: Claude PR Review
+          image: python:3.11
+          script:
+            - pip install "git+https://github.com/esingh25/claude-pr-reviewer.git"
+            - ai-pr-reviewer
+```
+
+Set `BITBUCKET_TOKEN` (a repository/workspace access token with PR read/write scope) and
+`ANTHROPIC_API_KEY` as repository variables (Repository settings → Repository variables — mark
+both as "Secured"). Configuration is otherwise read from Bitbucket Pipelines' own predefined
+variables (`BITBUCKET_WORKSPACE`, `BITBUCKET_REPO_SLUG`, `BITBUCKET_PR_ID`, `BITBUCKET_COMMIT`).
+
+Bitbucket's API doesn't expose per-file diffs directly — only a combined diff for the whole PR
+plus a separate file-list endpoint — so this path also exercises
+`diff_parser.split_unified_diff_by_file()` to reconstruct per-file patches, deriving filenames
+from the diff's `---`/`+++` lines rather than the `diff --git` header (which is ambiguous for
+filenames containing the literal substring " b/").
+
 ## Security notes
 
 - **Never trigger this action with `pull_request_target`.** That event runs with the base
@@ -154,16 +185,17 @@ pytest --cov=ai_pr_reviewer --cov-report=term-missing
 
 ```
 src/ai_pr_reviewer/
-  config.py          # env parsing - GitHub Actions or GitLab CI, dispatched by provider
-  diff_parser.py      # unified diff -> line-numbered FileDiff
-  context_finder.py   # finds related files in the same PR for cross-file context
-  vcs_provider.py      # provider-agnostic types (ChangedFile, NormalizedComment, VCSProvider)
-  github_client.py    # GitHub REST API + GitHubProvider adapter
-  gitlab_client.py     # GitLab REST API + GitLabProvider adapter
-  claude_client.py    # Claude API call + structured response parsing
-  review_engine.py    # orchestrates the end-to-end review against any VCSProvider
-  metrics.py           # builds + emits per-run metrics (step output/summary, no git commits)
-  __main__.py          # entrypoint - GitHub Action and the `ai-pr-reviewer` CLI both call this
+  config.py            # env parsing - GitHub Actions, GitLab CI, or Bitbucket Pipelines
+  diff_parser.py        # unified diff -> line-numbered FileDiff; combined-diff splitting
+  context_finder.py     # finds related files in the same PR for cross-file context
+  vcs_provider.py        # provider-agnostic types (ChangedFile, NormalizedComment, VCSProvider)
+  github_client.py      # GitHub REST API + GitHubProvider adapter
+  gitlab_client.py       # GitLab REST API + GitLabProvider adapter
+  bitbucket_client.py    # Bitbucket Cloud REST API + BitbucketProvider adapter
+  claude_client.py      # Claude API call + structured response parsing
+  review_engine.py      # orchestrates the end-to-end review against any VCSProvider
+  metrics.py             # builds + emits per-run metrics (step output/summary, no git commits)
+  __main__.py            # entrypoint - GitHub Action and the `ai-pr-reviewer` CLI both call this
 ```
 
 ## License

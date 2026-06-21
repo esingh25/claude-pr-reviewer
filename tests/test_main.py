@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from ai_pr_reviewer.bitbucket_client import BitbucketClientError
 from ai_pr_reviewer.config import Config, ConfigError
 from ai_pr_reviewer.context_finder import RelatedFile
 from ai_pr_reviewer.github_client import GitHubClientError
@@ -57,6 +58,46 @@ def test_main_returns_0_and_builds_github_provider_when_config_valid():
     mock_provider_cls.assert_called_once_with(mock_client_cls.return_value, 42)
     mock_anthropic_cls.assert_called_once_with(api_key="anthropic-key")
     mock_run_review.assert_called_once()
+
+
+def test_main_builds_bitbucket_provider_when_config_provider_is_bitbucket():
+    from ai_pr_reviewer.__main__ import main
+
+    with (
+        patch("ai_pr_reviewer.__main__.load_config", return_value=_config(provider="bitbucket")),
+        patch("ai_pr_reviewer.__main__.BitbucketClient") as mock_client_cls,
+        patch("ai_pr_reviewer.__main__.BitbucketProvider") as mock_provider_cls,
+        patch("ai_pr_reviewer.__main__.anthropic.Anthropic"),
+        patch(
+            "ai_pr_reviewer.__main__.run_review",
+            return_value=ReviewResult(files_reviewed=1, comments_posted=0),
+        ),
+    ):
+        exit_code = main()
+
+    assert exit_code == 0
+    mock_client_cls.assert_called_once_with("gh-token", "esingh25", "claude-pr-reviewer")
+    mock_provider_cls.assert_called_once_with(mock_client_cls.return_value, 42)
+
+
+def test_main_returns_1_and_logs_error_when_bitbucket_api_fails():
+    from ai_pr_reviewer.__main__ import main
+
+    with (
+        patch(
+            "ai_pr_reviewer.__main__.load_config", return_value=_config(provider="bitbucket")
+        ),
+        patch("ai_pr_reviewer.__main__.BitbucketClient"),
+        patch("ai_pr_reviewer.__main__.BitbucketProvider"),
+        patch("ai_pr_reviewer.__main__.anthropic.Anthropic"),
+        patch(
+            "ai_pr_reviewer.__main__.run_review",
+            side_effect=BitbucketClientError("Bitbucket API request failed with 422"),
+        ),
+    ):
+        exit_code = main()
+
+    assert exit_code == 1
 
 
 def test_main_builds_gitlab_provider_when_config_provider_is_gitlab():

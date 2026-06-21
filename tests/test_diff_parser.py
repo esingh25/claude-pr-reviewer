@@ -1,4 +1,4 @@
-from ai_pr_reviewer.diff_parser import LineType, parse_patch
+from ai_pr_reviewer.diff_parser import LineType, parse_patch, split_unified_diff_by_file
 
 
 def test_parse_patch_returns_empty_for_no_patch():
@@ -79,3 +79,129 @@ def test_old_lineno_for_returns_none_for_unknown_line():
     file_diff = parse_patch("foo.py", patch)
 
     assert file_diff.old_lineno_for(999) is None
+
+
+def test_split_unified_diff_by_file_splits_two_files():
+    combined = (
+        "diff --git a/foo.py b/foo.py\n"
+        "index abc123..def456 100644\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,1 +1,2 @@\n"
+        " line1\n"
+        "+added in foo\n"
+        "diff --git a/bar.py b/bar.py\n"
+        "index 111..222 100644\n"
+        "--- a/bar.py\n"
+        "+++ b/bar.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old in bar\n"
+        "+new in bar\n"
+    )
+
+    result = split_unified_diff_by_file(combined)
+
+    assert set(result.keys()) == {"foo.py", "bar.py"}
+    assert result["foo.py"].startswith("@@ -1,1 +1,2 @@")
+    assert "+added in foo" in result["foo.py"]
+    assert "+new in bar" in result["bar.py"]
+    assert "added in foo" not in result["bar.py"]
+
+
+def test_split_unified_diff_by_file_excludes_header_lines_from_patch():
+    combined = (
+        "diff --git a/foo.py b/foo.py\n"
+        "index abc123..def456 100644\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+
+    result = split_unified_diff_by_file(combined)
+
+    assert "diff --git" not in result["foo.py"]
+    assert "index abc123" not in result["foo.py"]
+    assert "--- a/foo.py" not in result["foo.py"]
+
+
+def test_split_unified_diff_by_file_returns_empty_dict_for_empty_diff():
+    assert split_unified_diff_by_file("") == {}
+
+
+def test_split_unified_diff_by_file_handles_single_file():
+    combined = (
+        "diff --git a/only.py b/only.py\n"
+        "--- a/only.py\n"
+        "+++ b/only.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-a\n"
+        "+b\n"
+    )
+
+    result = split_unified_diff_by_file(combined)
+
+    assert set(result.keys()) == {"only.py"}
+
+
+def test_split_unified_diff_by_file_handles_added_file():
+    combined = (
+        "diff --git a/new.py b/new.py\n"
+        "--- /dev/null\n"
+        "+++ b/new.py\n"
+        "@@ -0,0 +1,1 @@\n"
+        "+content\n"
+    )
+
+    result = split_unified_diff_by_file(combined)
+
+    assert set(result.keys()) == {"new.py"}
+
+
+def test_split_unified_diff_by_file_handles_deleted_file():
+    combined = (
+        "diff --git a/removed.py b/removed.py\n"
+        "--- a/removed.py\n"
+        "+++ /dev/null\n"
+        "@@ -1,1 +0,0 @@\n"
+        "-content\n"
+    )
+
+    result = split_unified_diff_by_file(combined)
+
+    assert set(result.keys()) == {"removed.py"}
+
+
+def test_split_unified_diff_by_file_handles_renamed_file():
+    combined = (
+        "diff --git a/old_name.py b/new_name.py\n"
+        "--- a/old_name.py\n"
+        "+++ b/new_name.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-x\n"
+        "+y\n"
+    )
+
+    result = split_unified_diff_by_file(combined)
+
+    assert set(result.keys()) == {"new_name.py"}
+    assert "+y" in result["new_name.py"]
+
+
+def test_split_unified_diff_by_file_handles_path_containing_b_slash():
+    # A filename that itself contains the literal substring " b/" — the exact ambiguous case a
+    # naive `diff --git a/X b/Y` regex would mis-split. Deriving the path from the unambiguous
+    # `+++ b/<path>` line (which has nothing after the path) avoids the ambiguity entirely.
+    combined = (
+        "diff --git a/evil b/file.py b/evil b/file.py\n"
+        "--- a/evil b/file.py\n"
+        "+++ b/evil b/file.py\n"
+        "@@ -1,1 +1,1 @@\n"
+        "-x\n"
+        "+y\n"
+    )
+
+    result = split_unified_diff_by_file(combined)
+
+    assert set(result.keys()) == {"evil b/file.py"}

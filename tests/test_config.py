@@ -271,3 +271,53 @@ def test_load_config_gitlab_raises_when_project_path_malformed(gitlab_env, monke
 
     with pytest.raises(ConfigError, match="CI_PROJECT_PATH"):
         load_config()
+
+
+@pytest.fixture
+def bitbucket_env(monkeypatch):
+    monkeypatch.setenv("BITBUCKET_BUILD_NUMBER", "42")
+    monkeypatch.setenv("BITBUCKET_TOKEN", "bb-token-123")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key-123")
+    monkeypatch.setenv("BITBUCKET_WORKSPACE", "myworkspace")
+    monkeypatch.setenv("BITBUCKET_REPO_SLUG", "myrepo")
+    monkeypatch.setenv("BITBUCKET_PR_ID", "9")
+    monkeypatch.setenv("BITBUCKET_COMMIT", "head4567890123head4567890123head456789012")
+    monkeypatch.delenv("BITBUCKET_CLONE_DIR", raising=False)
+    monkeypatch.delenv("GITLAB_CI", raising=False)
+    monkeypatch.delenv("INPUT_MODEL", raising=False)
+
+
+def test_load_config_dispatches_to_bitbucket_when_build_number_set(bitbucket_env):
+    config = load_config()
+
+    assert config.provider == "bitbucket"
+    assert config.vcs_token == "bb-token-123"
+    assert config.anthropic_api_key == "anthropic-key-123"
+    assert config.repo_owner == "myworkspace"
+    assert config.repo_name == "myrepo"
+    assert config.pr_number == 9
+    assert config.head_sha == "head4567890123head4567890123head456789012"
+
+
+def test_load_config_bitbucket_uses_clone_dir_as_workspace_root(
+    bitbucket_env, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("BITBUCKET_CLONE_DIR", str(tmp_path))
+
+    config = load_config()
+
+    assert config.workspace_root == str(tmp_path)
+
+
+def test_load_config_bitbucket_raises_when_token_missing(bitbucket_env, monkeypatch):
+    monkeypatch.delenv("BITBUCKET_TOKEN", raising=False)
+
+    with pytest.raises(ConfigError, match="BITBUCKET_TOKEN"):
+        load_config()
+
+
+def test_load_config_bitbucket_raises_when_pr_id_not_integer(bitbucket_env, monkeypatch):
+    monkeypatch.setenv("BITBUCKET_PR_ID", "not-a-number")
+
+    with pytest.raises(ConfigError, match="BITBUCKET_PR_ID"):
+        load_config()

@@ -1,4 +1,5 @@
-"""Process entrypoint for the Claude PR reviewer — runs under GitHub Actions or GitLab CI."""
+"""Process entrypoint for the Claude PR reviewer — GitHub Actions, GitLab CI, or Bitbucket
+Pipelines."""
 
 import os
 import sys
@@ -6,6 +7,11 @@ import time
 
 import anthropic
 
+from ai_pr_reviewer.bitbucket_client import (
+    BitbucketClient,
+    BitbucketClientError,
+    BitbucketProvider,
+)
 from ai_pr_reviewer.claude_client import review_file_diff
 from ai_pr_reviewer.config import Config, ConfigError, load_config
 from ai_pr_reviewer.context_finder import RelatedFile
@@ -20,7 +26,7 @@ from ai_pr_reviewer.metrics import (
 from ai_pr_reviewer.review_engine import ReviewResult, run_review
 from ai_pr_reviewer.vcs_provider import VCSProvider
 
-ProviderError = (GitHubClientError, GitLabClientError)
+ProviderError = (GitHubClientError, GitLabClientError, BitbucketClientError)
 
 
 def _build_provider(config: Config) -> VCSProvider:
@@ -31,6 +37,10 @@ def _build_provider(config: Config) -> VCSProvider:
             base_url=config.gitlab_base_url,
         )
         return GitLabProvider(client, config.pr_number)
+
+    if config.provider == "bitbucket":
+        client = BitbucketClient(config.vcs_token, config.repo_owner, config.repo_name)
+        return BitbucketProvider(client, config.pr_number)
 
     client = GitHubClient(config.vcs_token, config.repo_owner, config.repo_name)
     return GitHubProvider(client, config.pr_number)

@@ -16,7 +16,8 @@ enough to a given team's standards to actually be worth reading.
 
 Live today at `esingh25/claude-pr-reviewer`:
 - Composite GitHub Action, Python 3.11, triggered on `pull_request` events — and, as of Phase 4,
-  also a pip-installable CLI (`ai-pr-reviewer`, not yet published to PyPI) runnable from GitLab CI.
+  also a pip-installable CLI (`ai-pr-reviewer`, not yet published to PyPI) runnable from GitLab CI
+  or Bitbucket Pipelines.
 - Calls the base Claude API (`claude-sonnet-4-6` by default) per changed file — no fine-tuning
   (confirmed unavailable for Claude via self-serve API, see Phase 5 below).
 - **Cross-file context (Phase 2):** scans each file's diff for import/include statements
@@ -31,17 +32,22 @@ Live today at `esingh25/claude-pr-reviewer`:
   `VCSProvider` interface (`vcs_provider.py`); `GitHubProvider` adapts the original GitHub client,
   `GitLabProvider`/`gitlab_client.py` add GitLab merge request support (summary as an MR note,
   inline comments as discussion threads with GitLab's SHA-based `position` contract, correctly
-  handling both added-line and context-line comments). See "GitLab CI" in `README.md`.
+  handling both added-line and context-line comments), and `BitbucketProvider`/`bitbucket_client.py`
+  add Bitbucket Cloud pull request support (summary + inline comments via `content.raw`, per-file
+  patches reconstructed from Bitbucket's combined-diff endpoint via
+  `diff_parser.split_unified_diff_by_file()`). See "GitLab CI" / "Bitbucket Pipelines" in
+  `README.md`.
 - Hardened for production use: prompt-injection-resistant system prompt (covers both diff and
   related-file content), `@mention`/`#ref` sanitization on posted comments, capped file/comment
   counts, strict validation of Claude's JSON response shape, symlink-aware path-traversal guard on
   related-file reads, SHA-hex format validation on event-payload fields, GitLab `CI_SERVER_URL`
-  scheme validation, 135 tests / 99% coverage, clean lint, CI green. See `README.md` for usage and
-  security notes.
+  scheme validation, Bitbucket pagination host-allowlist, unambiguous filename derivation for
+  Bitbucket's combined diffs (from `---`/`+++` lines, not the ambiguous `diff --git` header), 165
+  tests / 99% coverage, clean lint, CI green. See `README.md` for usage and security notes.
 
 These phases cover "flagging issues," "understanding context across multiple files" within a
 single PR, a first cut at "tracking code quality over time," and "work across whichever
-version-control platform a team actually uses" (GitHub + GitLab; Bitbucket not yet built).
+version-control platform a team actually uses" (GitHub, GitLab, and Bitbucket Cloud).
 Everything below is what's needed to reach the fuller vision.
 
 ## Roadmap
@@ -78,21 +84,22 @@ project owner's to make, not something to assume:
 Sequenced after Phase 2 because metrics are only worth collecting once review quality itself has
 improved past the single-file baseline.
 
-### Phase 4 — Multi-VCS support ✅ shipped (GitLab; Bitbucket not yet built)
+### Phase 4 — Multi-VCS support ✅ shipped (GitHub, GitLab, Bitbucket Cloud)
 
 Abstracted `github_client.py` behind a small provider interface (`vcs_provider.py`) so the same
-review engine can run against GitLab merge requests too, not just GitHub PRs — Bitbucket support
-is designed for (see structural-mismatch note below) but not implemented yet. Confirmed via
-research that no lightweight, actively-maintained Python library already does this — provider
-clients exist per-platform (PyGithub, python-gitlab, atlassian-python-api) but nothing unifies
-diff-fetching and inline-comment-posting across all three, so the hand-rolled interface was the
-right call rather than adding a heavy dependency.
+review engine can run against GitLab merge requests and Bitbucket Cloud pull requests too, not
+just GitHub PRs (Bitbucket Server/Data Center — a separately-architected product — is explicitly
+out of scope). Confirmed via research that no lightweight, actively-maintained Python library
+already does this — provider clients exist per-platform (PyGithub, python-gitlab,
+atlassian-python-api) but nothing unifies diff-fetching and inline-comment-posting across all
+three, so the hand-rolled interface was the right call rather than adding a heavy dependency.
 
 Also repackaged the tool as a pip-installable CLI (`ai-pr-reviewer`, `[project.scripts]` entry in
-`pyproject.toml`) so it can run from GitLab CI via `pip install` rather than needing a
-GitHub-Action-shaped manifest — verified locally end-to-end (a real, if 401-rejected-on-a-fake-
-token, request reached GitLab's actual API). Deliberately **not published to PyPI** this session
-— that's a separate, explicit decision (package names are effectively permanent once claimed).
+`pyproject.toml`) so it can run from GitLab CI or Bitbucket Pipelines via `pip install` rather
+than needing a GitHub-Action-shaped manifest — verified locally end-to-end for both (real, if
+401-rejected-on-a-fake-token, requests reached each platform's actual API). Deliberately **not
+published to PyPI** this session — that's a separate, explicit decision (package names are
+effectively permanent once claimed).
 
 Key design constraint: **GitLab is the hard case, design around it first.** GitHub's comment
 addressing is stateless (`{path, line, side}`). GitLab requires a `position` object carrying three
@@ -106,11 +113,13 @@ a body-text field name mapping) to satisfy GitLab's stricter contract from day o
 GitHub/Bitbucket adapters will simply ignore the fields they don't need.
 
 Diff retrieval per provider:
-- GitHub (current): `GET /repos/{owner}/{repo}/pulls/{pr}/files`
+- GitHub: `GET /repos/{owner}/{repo}/pulls/{pr}/files`
 - GitLab: `GET /projects/:id/merge_requests/:iid/diffs` (paginated; the older `/changes` endpoint
   is deprecated)
-- Bitbucket: `GET /repositories/{ws}/{repo}/pullrequests/{id}/diffstat` (structured, closest
-  analog to GitHub's file list) or `/diff` (raw unified diff)
+- Bitbucket: `GET /repositories/{ws}/{repo}/pullrequests/{id}/diffstat` (file list, no patch text)
+  combined with `/diff` (one raw unified diff for the whole PR) — `diff_parser.
+  split_unified_diff_by_file()` reconstructs per-file patches from the combined diff, matched
+  against diffstat's `new.path`/`old.path` by filename.
 
 ### Phase 5 — Adapt review behavior to a team's historical feedback
 
@@ -130,13 +139,12 @@ This phase depends on Phase 3 existing first (it needs real accepted/dismissed c
 retrieve from), so it's sequenced last despite being the most "AI-flavored" item in the original
 pitch.
 
-## Open decisions before building Phase 3b, Bitbucket, or Phase 5
+## Open decisions before building Phase 3b or Phase 5
 
 - Phase 3b requires choosing and budgeting for hosting (even a small VM/PaaS instance is an
   ongoing cost commitment) — explicit go-ahead needed before starting it.
 - Publishing `ai-pr-reviewer` to PyPI (currently local-install-only) is a separate, explicit
   decision — package names are effectively permanent once claimed.
-- Bitbucket support would follow the same `VCSProvider` pattern GitLab now uses; not yet built.
 - Phase 5's RAG component needs a decision on retrieval mechanism (simple keyword/recency
   matching vs. an embedding-based vector search) once there's enough Phase 3 data to retrieve
   from.

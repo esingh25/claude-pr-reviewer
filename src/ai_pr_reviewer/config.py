@@ -1,4 +1,5 @@
-"""Load review configuration from environment variables — GitHub Actions or GitLab CI."""
+"""Load review configuration from environment variables — GitHub Actions, GitLab CI, or
+Bitbucket Pipelines."""
 
 import json
 import os
@@ -165,7 +166,32 @@ def _load_gitlab_config() -> Config:
     )
 
 
+def _load_bitbucket_config() -> Config:
+    bitbucket_token = _require_env("BITBUCKET_TOKEN")
+    workspace = _require_env("BITBUCKET_WORKSPACE")
+    repo_slug = _require_env("BITBUCKET_REPO_SLUG")
+    pr_id = _parse_required_int_env("BITBUCKET_PR_ID")
+    head_sha = _require_env("BITBUCKET_COMMIT")
+
+    return Config(
+        provider="bitbucket",
+        vcs_token=bitbucket_token,
+        repo_owner=workspace,
+        repo_name=repo_slug,
+        pr_number=pr_id,
+        # Bitbucket Pipelines has no predefined "base sha" variable; best-effort/unused, like
+        # GitLab's equivalent field — Bitbucket's own diff endpoints don't need it either.
+        base_sha="",
+        head_sha=head_sha,
+        workspace_root=os.environ.get("BITBUCKET_CLONE_DIR") or ".",
+        gitlab_base_url=DEFAULT_GITLAB_BASE_URL,
+        **_common_fields(),
+    )
+
+
 def load_config() -> Config:
     if _parse_bool_env("GITLAB_CI", False):
         return _load_gitlab_config()
+    if os.environ.get("BITBUCKET_BUILD_NUMBER"):
+        return _load_bitbucket_config()
     return _load_github_config()

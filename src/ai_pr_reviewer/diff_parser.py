@@ -5,6 +5,9 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 _HUNK_HEADER_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,\d+)? \+(?P<new_start>\d+)(?:,\d+)? @@")
+_DIFF_GIT_HEADER_RE = re.compile(r"^diff --git ")
+_OLD_FILE_HEADER_RE = re.compile(r"^--- (?:a/(?P<old_path>.*)|/dev/null)$")
+_NEW_FILE_HEADER_RE = re.compile(r"^\+\+\+ (?:b/(?P<new_path>.*)|/dev/null)$")
 
 
 class LineType(StrEnum):
@@ -76,3 +79,51 @@ def parse_patch(filename: str, patch: str | None) -> FileDiff:
             new_lineno += 1
 
     return FileDiff(filename=filename, lines=lines)
+
+
+def split_unified_diff_by_file(combined_diff: str) -> dict[str, str]:
+    """Split a multi-file unified diff (as returned by Bitbucket's PR /diff endpoint) by file.
+
+    Returns each file's hunk-only text (starting from the first `@@` line), in the same shape
+    `parse_patch()` already expects — the `diff --git`/`index`/`---`/`+++` header lines are
+    dropped since they carry no line-numbering information.
+
+    Filenames are derived from the `---`/`+++` lines, not the `diff --git a/X b/Y` header: the
+    header is ambiguous for any path containing the literal substring " b/" (greedy matching
+    can't tell where "a/X" ends and "b/Y" begins), while `+++ b/<path>` has nothing after the
+    path on that line, so there's no ambiguity to resolve.
+    """
+    files: dict[str, list[str]] = {}
+    current_filename: str | None = None
+    pending_old_path: str | None = None
+    in_hunk = False
+
+    for raw_line in combined_diff.splitlines():
+        if _DIFF_GIT_HEADER_RE.match(raw_line):
+            current_filename = None
+            pending_old_path = None
+            in_hunk = False
+            continue
+
+        old_match = _OLD_FILE_HEADER_RE.match(raw_line)
+        if old_match:
+            pending_old_path = old_match.group("old_path")
+            continue
+
+        new_match = _NEW_FILE_HEADER_RE.match(raw_line)
+        if new_match:
+            current_filename = new_match.group("new_path") or pending_old_path
+            if current_filename is not None:
+                files[current_filename] = []
+            continue
+
+        if current_filename is None:
+            continue
+
+        if raw_line.startswith("@@"):
+            in_hunk = True
+
+        if in_hunk:
+            files[current_filename].append(raw_line)
+
+    return {filename: "\n".join(file_lines) for filename, file_lines in files.items()}
