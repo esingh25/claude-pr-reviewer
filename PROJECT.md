@@ -12,7 +12,7 @@ The core technical challenges that follow from that: handling large codebases wi
 cost/latency, understanding context that spans multiple files, and producing suggestions specific
 enough to a given team's standards to actually be worth reading.
 
-## Current state — Phases 1 & 2 (shipped)
+## Current state — Phases 1, 2 & 3a (shipped)
 
 Live today at `esingh25/claude-pr-reviewer`:
 - Composite GitHub Action, Python 3.11, triggered on `pull_request` events.
@@ -22,16 +22,20 @@ Live today at `esingh25/claude-pr-reviewer`:
   (Python/JS/TS/Java/C/C++) and, on a match against another file already in the same PR, reads a
   capped excerpt of that file from the local checkout to give Claude extra context — opt-out via
   `enable-cross-file-context: 'false'` for privacy-sensitive repos.
+- **Metrics MVP (Phase 3a):** emits a structured per-run metrics record (files reviewed, comments
+  posted, severity breakdown, duration, status) as a step output and job step summary — no git
+  commits, no new permissions. See "Metrics" in `README.md` for the optional self-persistence
+  pattern.
 - GitHub only (REST API for fetching diffs and posting inline review comments).
-- No persistence — each run is stateless; nothing is tracked over time.
 - Hardened for production use: prompt-injection-resistant system prompt (covers both diff and
   related-file content), `@mention`/`#ref` sanitization on posted comments, capped file/comment
   counts, strict validation of Claude's JSON response shape, symlink-aware path-traversal guard on
-  related-file reads, 76 tests / 99% coverage, clean lint, CI green. See `README.md` for usage and
-  security notes.
+  related-file reads, SHA-hex format validation on event-payload fields, 94 tests / 99% coverage,
+  clean lint, CI green. See `README.md` for usage and security notes.
 
-These phases cover "flagging issues" and "understanding context across multiple files" within a
-single PR. Everything below is what's needed to reach the fuller vision.
+These phases cover "flagging issues," "understanding context across multiple files" within a
+single PR, and a first cut at "tracking code quality over time." Everything below is what's
+needed to reach the fuller vision.
 
 ## Roadmap
 
@@ -50,11 +54,14 @@ from the local checkout. No new infrastructure — pure extension of the existin
 Two stages, because the second stage requires an infrastructure/budget decision that's the
 project owner's to make, not something to assume:
 
-- **3a (MVP, no new infra):** after each review run, append a record (repo, PR number, commit SHA,
-  timestamp, files reviewed, comments posted, severity breakdown, model used, review duration) to
-  a small store committed back into the consuming repo (e.g. a JSON/SQLite file under
-  `.claude-pr-reviewer/`), with a simple generated summary (e.g. a markdown trend report). Fits
-  entirely within the existing Action — no server, no database to operate.
+- **3a (MVP, no new infra) ✅ shipped:** after each review run, the action builds a metrics
+  record (repo, PR number, head SHA, timestamp, model, files reviewed, comments posted, severity
+  breakdown, duration, status) and emits it via two GitHub-native mechanisms only — a step
+  `output` (JSON, for chaining) and the job's step summary (markdown) — deliberately with no git
+  commits and no new permissions. The original design called for the action to commit a metrics
+  file back into the repo itself, but that would need `contents: write` and custom git automation;
+  emitting via outputs keeps the permission footprint unchanged and lets teams that want real
+  persistence chain their own step with an established action (documented in `README.md`).
 - **3b (hosted dashboard, requires an infra decision):** graduate to a small persistent service —
   closest reference found is `middlewarehq/middleware` (Python/FastAPI + Postgres, 1.6k+ stars,
   open-source DORA-metrics platform) — once cross-repo/cross-team aggregation is actually needed.

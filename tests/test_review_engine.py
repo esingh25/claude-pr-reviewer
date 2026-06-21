@@ -223,6 +223,31 @@ def test_run_review_skips_cross_file_context_when_disabled(tmp_path):
     assert seen["related_files"] == []
 
 
+def test_run_review_tracks_severity_counts_of_posted_comments():
+    files = [{"filename": "a.py", "status": "modified", "patch": "@@ -1,1 +1,3 @@\n line1\n+x\n+y"}]
+    github_client = _FakeGitHubClient(files)
+
+    def review_fn(filename, diff_text, related_files):
+        return [
+            ReviewSuggestion(line=2, severity="critical", comment="bad"),
+            ReviewSuggestion(line=3, severity="critical", comment="also bad"),
+            ReviewSuggestion(line=999, severity="high", comment="not in diff, filtered out"),
+        ]
+
+    result = run_review(_config(), github_client, review_fn)
+
+    assert result.severity_counts == {"critical": 2, "high": 0, "medium": 0, "low": 0}
+
+
+def test_run_review_severity_counts_all_zero_when_no_comments():
+    files = [{"filename": "a.py", "status": "modified", "patch": "@@ -1,1 +1,2 @@\n line1\n+added"}]
+    github_client = _FakeGitHubClient(files)
+
+    result = run_review(_config(), github_client, lambda filename, diff_text, related_files: [])
+
+    assert result.severity_counts == {"critical": 0, "high": 0, "medium": 0, "low": 0}
+
+
 def test_run_review_summary_includes_ai_disclaimer():
     files = [{"filename": "a.py", "status": "modified", "patch": "@@ -1,1 +1,2 @@\n line1\n+added"}]
     github_client = _FakeGitHubClient(files)

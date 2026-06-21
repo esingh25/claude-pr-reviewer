@@ -34,6 +34,14 @@ inputs:
     required: false
     default: 'true'
 
+outputs:
+  metrics:
+    description: >-
+      JSON record of this review run (repo, PR number, head SHA, model, timestamp, files
+      reviewed, comments posted, severity breakdown, duration). Also written to the job's step
+      summary as a readable markdown block.
+    value: ${{ steps.review.outputs.metrics }}
+
 runs:
   using: 'composite'
   steps:
@@ -47,6 +55,7 @@ runs:
       run: pip install -r "${{ github.action_path }}/requirements.txt"
 
     - name: Run Claude PR review
+      id: review
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}

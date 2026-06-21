@@ -2,11 +2,17 @@
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 
 DEFAULT_MODEL = "claude-sonnet-4-6"
 DEFAULT_MAX_DIFF_CHARS = 12000
 DEFAULT_MAX_FILES = 50
+_SHA_RE = re.compile(r"[0-9a-f]{40}")
+
+
+def _is_valid_sha(value: object) -> bool:
+    return isinstance(value, str) and bool(_SHA_RE.fullmatch(value))
 
 
 class ConfigError(Exception):
@@ -70,13 +76,11 @@ def _extract_pr_fields(pull_request: dict) -> tuple[int, str, str]:
     base_sha = base.get("sha") if isinstance(base, dict) else None
     head_sha = head.get("sha") if isinstance(head, dict) else None
 
-    fields_valid = (
-        isinstance(number, int) and isinstance(base_sha, str) and isinstance(head_sha, str)
-    )
+    fields_valid = isinstance(number, int) and _is_valid_sha(base_sha) and _is_valid_sha(head_sha)
     if not fields_valid:
         raise ConfigError(
             "Event payload's pull_request is missing required fields: "
-            "number (int), base.sha (str), head.sha (str)"
+            "number (int), base.sha (40-char hex str), head.sha (40-char hex str)"
         )
     return number, base_sha, head_sha
 

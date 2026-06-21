@@ -2,7 +2,7 @@
 
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ai_pr_reviewer.claude_client import ClaudeReviewError, ReviewSuggestion
@@ -16,10 +16,15 @@ ReviewFn = Callable[[str, str, list[RelatedFile]], list[ReviewSuggestion]]
 DISCLAIMER = "_AI-generated review via Claude — verify suggestions before acting on them._\n\n"
 
 
+def _zero_severity_counts() -> dict[str, int]:
+    return {"critical": 0, "high": 0, "medium": 0, "low": 0}
+
+
 @dataclass(frozen=True)
 class ReviewResult:
     files_reviewed: int
     comments_posted: int
+    severity_counts: dict[str, int] = field(default_factory=_zero_severity_counts)
 
 
 def _build_summary(files_reviewed: int, comments_posted: int) -> str:
@@ -36,6 +41,7 @@ def run_review(config: Config, github_client: GitHubClient, review_fn: ReviewFn)
     workspace_root = Path(config.workspace_root)
 
     comments: list[ReviewComment] = []
+    severity_counts = _zero_severity_counts()
     files_reviewed = 0
 
     for file in files:
@@ -76,6 +82,7 @@ def run_review(config: Config, github_client: GitHubClient, review_fn: ReviewFn)
                     body=f"**{suggestion.severity.upper()}**: {suggestion.comment}",
                 )
             )
+            severity_counts[suggestion.severity] = severity_counts.get(suggestion.severity, 0) + 1
 
     if files_reviewed == 0:
         return ReviewResult(files_reviewed=0, comments_posted=0)
@@ -85,4 +92,8 @@ def run_review(config: Config, github_client: GitHubClient, review_fn: ReviewFn)
         summary=_build_summary(files_reviewed, len(comments)),
         comments=comments,
     )
-    return ReviewResult(files_reviewed=files_reviewed, comments_posted=len(comments))
+    return ReviewResult(
+        files_reviewed=files_reviewed,
+        comments_posted=len(comments),
+        severity_counts=severity_counts,
+    )

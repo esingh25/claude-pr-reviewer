@@ -7,8 +7,8 @@ from ai_pr_reviewer.config import ConfigError, load_config
 EVENT_PAYLOAD = {
     "pull_request": {
         "number": 42,
-        "base": {"sha": "abc123"},
-        "head": {"sha": "def456"},
+        "base": {"sha": "abc1234567890abc1234567890abc1234567890a"},
+        "head": {"sha": "def4567890123def4567890123def4567890123d"},
     }
 }
 
@@ -39,8 +39,8 @@ def test_load_config_parses_required_fields(base_env):
     assert config.repo_owner == "esingh25"
     assert config.repo_name == "claude-pr-reviewer"
     assert config.pr_number == 42
-    assert config.base_sha == "abc123"
-    assert config.head_sha == "def456"
+    assert config.base_sha == "abc1234567890abc1234567890abc1234567890a"
+    assert config.head_sha == "def4567890123def4567890123def4567890123d"
 
 
 def test_load_config_applies_defaults(base_env):
@@ -151,13 +151,31 @@ def test_load_config_raises_when_event_file_not_pull_request(base_env, monkeypat
         load_config()
 
 
+_VALID_BASE_SHA = "abc1234567890abc1234567890abc1234567890a"
+_VALID_HEAD_SHA = "def4567890123def4567890123def4567890123d"
+
+
 @pytest.mark.parametrize(
     "malformed_pull_request",
     [
-        {"base": {"sha": "abc123"}, "head": {"sha": "def456"}},  # missing number
-        {"number": "not-an-int", "base": {"sha": "abc123"}, "head": {"sha": "def456"}},
-        {"number": 42, "base": {}, "head": {"sha": "def456"}},  # missing base.sha
-        {"number": 42, "base": {"sha": "abc123"}, "head": None},  # head not an object
+        {"base": {"sha": _VALID_BASE_SHA}, "head": {"sha": _VALID_HEAD_SHA}},  # missing number
+        {
+            "number": "not-an-int",
+            "base": {"sha": _VALID_BASE_SHA},
+            "head": {"sha": _VALID_HEAD_SHA},
+        },
+        {"number": 42, "base": {}, "head": {"sha": _VALID_HEAD_SHA}},  # missing base.sha
+        {"number": 42, "base": {"sha": _VALID_BASE_SHA}, "head": None},  # head not an object
+        {
+            "number": 42,
+            "base": {"sha": "not-valid-hex"},
+            "head": {"sha": _VALID_HEAD_SHA},
+        },  # base.sha not 40-char hex
+        {
+            "number": 42,
+            "base": {"sha": _VALID_BASE_SHA},
+            "head": {"sha": "too-short"},
+        },  # head.sha not 40-char hex
     ],
 )
 def test_load_config_raises_when_pull_request_fields_malformed(

@@ -26,6 +26,33 @@ characters of related-file content per review, beyond what each file's own diff 
 privacy-sensitive private repos, set `enable-cross-file-context: 'false'` to disable this and only
 ever send diff hunks.
 
+## Metrics
+
+Each run emits a structured metrics record (repo, PR number, head SHA, model, files reviewed,
+comments posted, severity breakdown, duration, status) two ways:
+- As a readable markdown block in the job's **step summary** (visible in the Actions UI run page).
+- As an action **output** (`metrics`, a compact JSON string) you can chain in your own workflow.
+
+This is intentionally GitHub-native only — the action never commits anything back to your repo or
+requests `contents: write`. If you want to track metrics over time, persist the output yourself,
+e.g.:
+
+```yaml
+      - uses: esingh25/claude-pr-reviewer@v1
+        id: claude_review
+        with:
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Append metrics and commit
+        run: echo '${{ steps.claude_review.outputs.metrics }}' >> .claude-pr-reviewer/metrics.jsonl
+      - uses: EndBug/add-and-commit@v9
+        with:
+          add: .claude-pr-reviewer/metrics.jsonl
+          message: 'chore: record review metrics'
+```
+
+(Use a separate branch for this if you don't want metrics commits mixed into PR history.)
+
 ## Usage
 
 Add a workflow to the repository you want reviewed:
@@ -101,6 +128,7 @@ src/ai_pr_reviewer/
   github_client.py    # GitHub REST API: fetch PR files, post review
   claude_client.py    # Claude API call + structured response parsing
   review_engine.py    # orchestrates the end-to-end review
+  metrics.py           # builds + emits per-run metrics (step output/summary, no git commits)
   __main__.py          # action entrypoint
 ```
 
