@@ -1,9 +1,12 @@
 import json
 from datetime import UTC, datetime
 
+import responses
+
 from ai_pr_reviewer.config import Config
 from ai_pr_reviewer.metrics import (
     build_metrics_record,
+    post_to_dashboard,
     render_step_summary,
     write_github_output,
     write_step_summary,
@@ -151,5 +154,41 @@ def test_write_step_summary_logs_warning_instead_of_raising_on_oserror(tmp_path,
     unwritable_path = tmp_path / "missing-dir" / "summary.md"
 
     write_step_summary("text", str(unwritable_path))
+
+    assert "::warning::" in capsys.readouterr().err
+
+
+def test_post_to_dashboard_is_noop_without_url_or_key():
+    record = build_metrics_record(
+        _config(), ReviewResult(files_reviewed=1, comments_posted=0), duration_seconds=0.5
+    )
+
+    post_to_dashboard(record, None, None)
+    post_to_dashboard(record, "https://dashboard.example.com", None)
+    post_to_dashboard(record, None, "key")
+
+
+@responses.activate
+def test_post_to_dashboard_sends_record_with_api_key_header():
+    captured = responses.post("https://dashboard.example.com/api/metrics", json={}, status=201)
+    record = build_metrics_record(
+        _config(), ReviewResult(files_reviewed=1, comments_posted=0), duration_seconds=0.5
+    )
+
+    post_to_dashboard(record, "https://dashboard.example.com", "secret-key")
+
+    assert captured.calls[0].request.headers["X-API-Key"] == "secret-key"
+
+
+@responses.activate
+def test_post_to_dashboard_logs_warning_instead_of_raising_on_failure(capsys):
+    responses.post(
+        "https://dashboard.example.com/api/metrics", json={"detail": "down"}, status=500
+    )
+    record = build_metrics_record(
+        _config(), ReviewResult(files_reviewed=1, comments_posted=0), duration_seconds=0.5
+    )
+
+    post_to_dashboard(record, "https://dashboard.example.com", "secret-key")
 
     assert "::warning::" in capsys.readouterr().err

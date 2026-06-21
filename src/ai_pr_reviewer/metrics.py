@@ -17,6 +17,8 @@ import sys
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
+import requests
+
 from ai_pr_reviewer.config import Config
 from ai_pr_reviewer.review_engine import ReviewResult
 
@@ -26,6 +28,7 @@ class MetricsRecord:
     repo: str
     pr_number: int
     head_sha: str
+    provider: str
     timestamp: str
     model: str
     files_reviewed: int
@@ -47,6 +50,7 @@ def build_metrics_record(
         repo=f"{config.repo_owner}/{config.repo_name}",
         pr_number=config.pr_number,
         head_sha=config.head_sha,
+        provider=config.provider,
         timestamp=timestamp,
         model=config.model,
         files_reviewed=result.files_reviewed,
@@ -91,3 +95,23 @@ def write_step_summary(text: str, summary_path: str | None) -> None:
             f.write(text)
     except OSError as exc:
         print(f"::warning::Failed to write step summary: {exc}", file=sys.stderr)
+
+
+def post_to_dashboard(
+    record: MetricsRecord, dashboard_url: str | None, api_key: str | None
+) -> None:
+    """Optionally POST this run's metrics to a self-hosted dashboard. Opt-in only: a no-op
+    unless both DASHBOARD_URL and DASHBOARD_API_KEY are configured. Never raises — a dashboard
+    outage must never fail the review run itself."""
+    if not dashboard_url or not api_key:
+        return
+    try:
+        response = requests.post(
+            f"{dashboard_url.rstrip('/')}/api/metrics",
+            json=asdict(record),
+            headers={"X-API-Key": api_key},
+            timeout=10,
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"::warning::Failed to post metrics to dashboard: {exc}", file=sys.stderr)

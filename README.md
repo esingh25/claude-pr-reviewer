@@ -56,6 +56,10 @@ e.g.:
           message: 'chore: record review metrics'
 ```
 
+Alternatively, set `DASHBOARD_URL`/`DASHBOARD_API_KEY` env vars to have each run POST its metrics
+to a [claude-pr-reviewer-dashboard](https://github.com/esingh25/claude-pr-reviewer-dashboard)
+instance automatically — opt-in, best-effort (a dashboard outage never fails the review run).
+
 (Use a separate branch for this if you don't want metrics commits mixed into PR history.)
 
 ## Usage

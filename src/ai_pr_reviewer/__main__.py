@@ -19,6 +19,7 @@ from ai_pr_reviewer.github_client import GitHubClient, GitHubClientError, GitHub
 from ai_pr_reviewer.gitlab_client import GitLabClient, GitLabClientError, GitLabProvider
 from ai_pr_reviewer.metrics import (
     build_metrics_record,
+    post_to_dashboard,
     render_step_summary,
     write_github_output,
     write_step_summary,
@@ -76,6 +77,9 @@ def main() -> int:
         write_step_summary(
             render_step_summary(failure_record), os.environ.get("GITHUB_STEP_SUMMARY")
         )
+        post_to_dashboard(
+            failure_record, os.environ.get("DASHBOARD_URL"), os.environ.get("DASHBOARD_API_KEY")
+        )
         print(f"::error::{exc}", file=sys.stderr)
         return 1
     duration_seconds = time.monotonic() - started_at
@@ -83,6 +87,7 @@ def main() -> int:
     record = build_metrics_record(config, result, duration_seconds)
     write_github_output(record, os.environ.get("GITHUB_OUTPUT"))
     write_step_summary(render_step_summary(record), os.environ.get("GITHUB_STEP_SUMMARY"))
+    post_to_dashboard(record, os.environ.get("DASHBOARD_URL"), os.environ.get("DASHBOARD_API_KEY"))
 
     print(f"Reviewed {result.files_reviewed} file(s), posted {result.comments_posted} comment(s).")
     return 0
