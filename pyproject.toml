@@ -1,11 +1,11 @@
 [project]
 name = "ai-pr-reviewer"
-version = "0.2.0"
-description = "AI-powered pull/merge request reviewer using the Claude API (GitHub Actions or GitLab CI)"
+version = "1.0.0"
+description = "AI-powered pull/merge request reviewer using the Claude API (GitHub Actions, GitLab CI, or Bitbucket Pipelines)"
 requires-python = ">=3.11"
 dependencies = [
-    "anthropic>=0.40.0",
-    "requests>=2.32.0",
+    "anthropic==0.111.0",
+    "requests==2.34.2",
 ]
 
 [project.scripts]
