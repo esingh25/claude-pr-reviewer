@@ -1,18 +1,21 @@
 # Claude PR Reviewer
 
-AI-powered GitHub Action that reviews pull request diffs using the [Claude API](https://docs.anthropic.com/) and posts inline review comments.
+AI-powered pull/merge request reviewer using the [Claude API](https://docs.anthropic.com/). Ships
+as a GitHub Action and, as of this version, also as a pip-installable CLI for GitLab CI (note:
+the CLI is built and tested locally but **not yet published to PyPI** — see "GitLab CI" below).
 
 ## How it works
 
-On a pull request event, the action:
-1. Fetches the PR's changed files and unified diffs via the GitHub REST API.
+On a pull/merge request event, the tool:
+1. Fetches the PR/MR's changed files and unified diffs via the GitHub or GitLab REST API.
 2. For each file, scans its diff for import/include statements and, if any match another file
    already in the same PR's changed-file list, reads a capped excerpt of that related file from
    the local checkout to give Claude cross-file context (see "Cross-file context" below).
 3. Sends each file's diff — plus any related-file excerpts — to Claude with a review prompt,
    asking for structured JSON feedback.
 4. Filters suggestions to lines that are actually part of the diff.
-5. Posts a single GitHub PR review with inline comments and a summary.
+5. Posts a single review with inline comments and a summary (a GitHub PR review, or a GitLab MR
+   note + discussion threads).
 
 ### Cross-file context
 
@@ -95,6 +98,35 @@ Add `ANTHROPIC_API_KEY` as a repository secret (Settings → Secrets and variabl
 | `max-files` | no | `50` | Max changed files reviewed per PR (bounds API cost) |
 | `enable-cross-file-context` | no | `true` | Include related-file excerpts as extra context (see above) |
 
+## GitLab CI
+
+The same tool is installable as a CLI and runs the same review logic against GitLab merge
+requests. It is **not published to PyPI** — install it from this repo directly:
+
+```yaml
+# .gitlab-ci.yml
+claude_review:
+  image: python:3.11
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - pip install "git+https://github.com/esingh25/claude-pr-reviewer.git"
+    - ai-pr-reviewer
+  variables:
+    GITLAB_TOKEN: $GITLAB_TOKEN          # a project/personal access token with API scope
+    ANTHROPIC_API_KEY: $ANTHROPIC_API_KEY
+```
+
+Configuration is read from GitLab's own predefined CI/CD variables (`CI_PROJECT_PATH`,
+`CI_MERGE_REQUEST_IID`, `CI_COMMIT_SHA`, `CI_SERVER_URL` for self-hosted instances) plus
+`GITLAB_TOKEN`/`ANTHROPIC_API_KEY`, which you set as masked CI/CD variables in the project's
+Settings → CI/CD → Variables. `INPUT_MODEL`/`INPUT_MAX_DIFF_CHARS`/`INPUT_MAX_FILES`/
+`INPUT_ENABLE_CROSS_FILE_CONTEXT` work the same as the GitHub Action inputs above.
+
+GitLab's discussion API needs `old_line`/`new_line` set differently depending on whether a
+comment lands on an added or an unchanged context line; this is handled correctly for both cases
+via `diff_parser.FileDiff.old_lineno_for()`.
+
 ## Security notes
 
 - **Never trigger this action with `pull_request_target`.** That event runs with the base
@@ -122,14 +154,16 @@ pytest --cov=ai_pr_reviewer --cov-report=term-missing
 
 ```
 src/ai_pr_reviewer/
-  config.py          # env/event-payload parsing
+  config.py          # env parsing - GitHub Actions or GitLab CI, dispatched by provider
   diff_parser.py      # unified diff -> line-numbered FileDiff
   context_finder.py   # finds related files in the same PR for cross-file context
-  github_client.py    # GitHub REST API: fetch PR files, post review
+  vcs_provider.py      # provider-agnostic types (ChangedFile, NormalizedComment, VCSProvider)
+  github_client.py    # GitHub REST API + GitHubProvider adapter
+  gitlab_client.py     # GitLab REST API + GitLabProvider adapter
   claude_client.py    # Claude API call + structured response parsing
-  review_engine.py    # orchestrates the end-to-end review
+  review_engine.py    # orchestrates the end-to-end review against any VCSProvider
   metrics.py           # builds + emits per-run metrics (step output/summary, no git commits)
-  __main__.py          # action entrypoint
+  __main__.py          # entrypoint - GitHub Action and the `ai-pr-reviewer` CLI both call this
 ```
 
 ## License

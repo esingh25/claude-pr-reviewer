@@ -1,4 +1,4 @@
-"""Load review configuration from environment variables and the GitHub event payload."""
+"""Load review configuration from environment variables — GitHub Actions or GitLab CI."""
 
 import json
 import os
@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 DEFAULT_MODEL = "claude-sonnet-4-6"
 DEFAULT_MAX_DIFF_CHARS = 12000
 DEFAULT_MAX_FILES = 50
+DEFAULT_GITLAB_BASE_URL = "https://gitlab.com"
 _SHA_RE = re.compile(r"[0-9a-f]{40}")
 
 
@@ -21,7 +22,8 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class Config:
-    github_token: str = field(repr=False)
+    provider: str
+    vcs_token: str = field(repr=False)
     anthropic_api_key: str = field(repr=False)
     repo_owner: str
     repo_name: str
@@ -33,6 +35,7 @@ class Config:
     max_files: int
     workspace_root: str
     enable_cross_file_context: bool
+    gitlab_base_url: str
 
 
 def _require_env(name: str) -> str:
@@ -46,6 +49,14 @@ def _parse_int_env(name: str, default: int) -> int:
     raw = os.environ.get(name)
     if not raw:
         return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} must be an integer, got {raw!r}") from exc
+
+
+def _parse_required_int_env(name: str) -> int:
+    raw = _require_env(name)
     try:
         return int(raw)
     except ValueError as exc:
@@ -85,9 +96,18 @@ def _extract_pr_fields(pull_request: dict) -> tuple[int, str, str]:
     return number, base_sha, head_sha
 
 
-def load_config() -> Config:
+def _common_fields() -> dict:
+    return {
+        "anthropic_api_key": _require_env("ANTHROPIC_API_KEY"),
+        "model": os.environ.get("INPUT_MODEL") or DEFAULT_MODEL,
+        "max_diff_chars": _parse_int_env("INPUT_MAX_DIFF_CHARS", DEFAULT_MAX_DIFF_CHARS),
+        "max_files": _parse_int_env("INPUT_MAX_FILES", DEFAULT_MAX_FILES),
+        "enable_cross_file_context": _parse_bool_env("INPUT_ENABLE_CROSS_FILE_CONTEXT", True),
+    }
+
+
+def _load_github_config() -> Config:
     github_token = _require_env("GITHUB_TOKEN")
-    anthropic_api_key = _require_env("ANTHROPIC_API_KEY")
     repository = _require_env("GITHUB_REPOSITORY")
     event_path = _require_env("GITHUB_EVENT_PATH")
 
@@ -97,16 +117,55 @@ def load_config() -> Config:
     pr_number, base_sha, head_sha = _extract_pr_fields(pull_request)
 
     return Config(
-        github_token=github_token,
-        anthropic_api_key=anthropic_api_key,
+        provider="github",
+        vcs_token=github_token,
         repo_owner=repo_owner,
         repo_name=repo_name,
         pr_number=pr_number,
         base_sha=base_sha,
         head_sha=head_sha,
-        model=os.environ.get("INPUT_MODEL") or DEFAULT_MODEL,
-        max_diff_chars=_parse_int_env("INPUT_MAX_DIFF_CHARS", DEFAULT_MAX_DIFF_CHARS),
-        max_files=_parse_int_env("INPUT_MAX_FILES", DEFAULT_MAX_FILES),
         workspace_root=os.environ.get("GITHUB_WORKSPACE") or ".",
-        enable_cross_file_context=_parse_bool_env("INPUT_ENABLE_CROSS_FILE_CONTEXT", True),
+        gitlab_base_url=DEFAULT_GITLAB_BASE_URL,
+        **_common_fields(),
     )
+
+
+def _load_gitlab_config() -> Config:
+    gitlab_token = _require_env("GITLAB_TOKEN")
+    project_path = _require_env("CI_PROJECT_PATH")
+    mr_iid = _parse_required_int_env("CI_MERGE_REQUEST_IID")
+    head_sha = _require_env("CI_COMMIT_SHA")
+
+    repo_owner, _, repo_name = project_path.rpartition("/")
+    if not repo_owner or not repo_name:
+        raise ConfigError(
+            f"CI_PROJECT_PATH must be in 'namespace/project' form, got {project_path!r}"
+        )
+
+    # CI_SERVER_URL is set by the GitLab runner itself (the instance's own configured URL),
+    # never by anything in the MR diff/title/description — same trust tier as GITLAB_TOKEN.
+    gitlab_base_url = os.environ.get("CI_SERVER_URL") or DEFAULT_GITLAB_BASE_URL
+    if not gitlab_base_url.startswith(("http://", "https://")):
+        raise ConfigError(f"CI_SERVER_URL must be an http(s) URL, got {gitlab_base_url!r}")
+
+    return Config(
+        provider="gitlab",
+        vcs_token=gitlab_token,
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        pr_number=mr_iid,
+        # CI_MERGE_REQUEST_DIFF_BASE_SHA is only set on MR-triggered pipelines and isn't used by
+        # GitLabProvider's own API calls (which fetch fresh diff_refs) — best-effort, for metrics
+        # display only, so it's intentionally not validated as strict 40-char hex like GitHub's.
+        base_sha=os.environ.get("CI_MERGE_REQUEST_DIFF_BASE_SHA") or "",
+        head_sha=head_sha,
+        workspace_root=os.environ.get("CI_PROJECT_DIR") or ".",
+        gitlab_base_url=gitlab_base_url,
+        **_common_fields(),
+    )
+
+
+def load_config() -> Config:
+    if _parse_bool_env("GITLAB_CI", False):
+        return _load_gitlab_config()
+    return _load_github_config()

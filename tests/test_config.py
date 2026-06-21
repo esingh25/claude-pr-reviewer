@@ -29,12 +29,14 @@ def base_env(monkeypatch, event_file):
     monkeypatch.delenv("INPUT_MODEL", raising=False)
     monkeypatch.delenv("INPUT_MAX_DIFF_CHARS", raising=False)
     monkeypatch.delenv("GITHUB_WORKSPACE", raising=False)
+    monkeypatch.delenv("GITLAB_CI", raising=False)
 
 
 def test_load_config_parses_required_fields(base_env):
     config = load_config()
 
-    assert config.github_token == "gh-token-123"
+    assert config.provider == "github"
+    assert config.vcs_token == "gh-token-123"
     assert config.anthropic_api_key == "anthropic-key-123"
     assert config.repo_owner == "esingh25"
     assert config.repo_name == "claude-pr-reviewer"
@@ -186,4 +188,86 @@ def test_load_config_raises_when_pull_request_fields_malformed(
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
 
     with pytest.raises(ConfigError, match="number|base.sha|head.sha"):
+        load_config()
+
+
+@pytest.fixture
+def gitlab_env(monkeypatch):
+    monkeypatch.setenv("GITLAB_CI", "true")
+    monkeypatch.setenv("GITLAB_TOKEN", "gitlab-token-123")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-key-123")
+    monkeypatch.setenv("CI_PROJECT_PATH", "mygroup/myproject")
+    monkeypatch.setenv("CI_MERGE_REQUEST_IID", "7")
+    monkeypatch.setenv("CI_COMMIT_SHA", "head4567890123head4567890123head456789012")
+    monkeypatch.delenv("CI_MERGE_REQUEST_DIFF_BASE_SHA", raising=False)
+    monkeypatch.delenv("CI_SERVER_URL", raising=False)
+    monkeypatch.delenv("CI_PROJECT_DIR", raising=False)
+    monkeypatch.delenv("INPUT_MODEL", raising=False)
+
+
+def test_load_config_dispatches_to_gitlab_when_gitlab_ci_set(gitlab_env):
+    config = load_config()
+
+    assert config.provider == "gitlab"
+    assert config.vcs_token == "gitlab-token-123"
+    assert config.anthropic_api_key == "anthropic-key-123"
+    assert config.repo_owner == "mygroup"
+    assert config.repo_name == "myproject"
+    assert config.pr_number == 7
+    assert config.head_sha == "head4567890123head4567890123head456789012"
+    assert config.gitlab_base_url == "https://gitlab.com"
+
+
+def test_load_config_gitlab_raises_when_server_url_not_http(gitlab_env, monkeypatch):
+    monkeypatch.setenv("CI_SERVER_URL", "ftp://gitlab.example.com")
+
+    with pytest.raises(ConfigError, match="CI_SERVER_URL"):
+        load_config()
+
+
+def test_load_config_gitlab_handles_nested_group_paths(gitlab_env, monkeypatch):
+    monkeypatch.setenv("CI_PROJECT_PATH", "group/subgroup/myproject")
+
+    config = load_config()
+
+    assert config.repo_owner == "group/subgroup"
+    assert config.repo_name == "myproject"
+
+
+def test_load_config_gitlab_uses_ci_server_url_for_self_hosted(gitlab_env, monkeypatch):
+    monkeypatch.setenv("CI_SERVER_URL", "https://gitlab.example.com")
+
+    config = load_config()
+
+    assert config.gitlab_base_url == "https://gitlab.example.com"
+
+
+def test_load_config_gitlab_uses_ci_project_dir_as_workspace_root(
+    gitlab_env, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("CI_PROJECT_DIR", str(tmp_path))
+
+    config = load_config()
+
+    assert config.workspace_root == str(tmp_path)
+
+
+def test_load_config_gitlab_raises_when_token_missing(gitlab_env, monkeypatch):
+    monkeypatch.delenv("GITLAB_TOKEN", raising=False)
+
+    with pytest.raises(ConfigError, match="GITLAB_TOKEN"):
+        load_config()
+
+
+def test_load_config_gitlab_raises_when_mr_iid_not_integer(gitlab_env, monkeypatch):
+    monkeypatch.setenv("CI_MERGE_REQUEST_IID", "not-a-number")
+
+    with pytest.raises(ConfigError, match="CI_MERGE_REQUEST_IID"):
+        load_config()
+
+
+def test_load_config_gitlab_raises_when_project_path_malformed(gitlab_env, monkeypatch):
+    monkeypatch.setenv("CI_PROJECT_PATH", "no-slash-here")
+
+    with pytest.raises(ConfigError, match="CI_PROJECT_PATH"):
         load_config()

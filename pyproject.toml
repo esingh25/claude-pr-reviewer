@@ -1,12 +1,15 @@
 [project]
 name = "ai-pr-reviewer"
-version = "0.1.0"
-description = "AI-powered GitHub pull request reviewer using the Claude API"
+version = "0.2.0"
+description = "AI-powered pull/merge request reviewer using the Claude API (GitHub Actions or GitLab CI)"
 requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
     "requests>=2.32.0",
 ]
+
+[project.scripts]
+ai-pr-reviewer = "ai_pr_reviewer.__main__:main"
 
 [project.optional-dependencies]
 dev = [

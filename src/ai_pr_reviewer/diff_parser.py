@@ -34,6 +34,17 @@ class FileDiff:
             if line.line_type in (LineType.ADDED, LineType.CONTEXT) and line.new_lineno is not None
         }
 
+    def old_lineno_for(self, new_lineno: int) -> int | None:
+        """The corresponding old-file line number for a commentable line, or None if added.
+
+        Needed by providers (GitLab) whose comment-positioning contract requires both the old
+        and new line number for unchanged context lines, since the line exists on both sides.
+        """
+        for line in self.lines:
+            if line.new_lineno == new_lineno and line.line_type == LineType.CONTEXT:
+                return line.old_lineno
+        return None
+
 
 def parse_patch(filename: str, patch: str | None) -> FileDiff:
     if not patch:

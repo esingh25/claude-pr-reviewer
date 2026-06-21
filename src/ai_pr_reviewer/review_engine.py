@@ -9,7 +9,7 @@ from ai_pr_reviewer.claude_client import ClaudeReviewError, ReviewSuggestion
 from ai_pr_reviewer.config import Config
 from ai_pr_reviewer.context_finder import RelatedFile, find_related_files
 from ai_pr_reviewer.diff_parser import parse_patch
-from ai_pr_reviewer.github_client import GitHubClient, ReviewComment
+from ai_pr_reviewer.vcs_provider import NormalizedComment, VCSProvider
 
 ReviewFn = Callable[[str, str, list[RelatedFile]], list[ReviewSuggestion]]
 
@@ -35,22 +35,23 @@ def _build_summary(files_reviewed: int, comments_posted: int) -> str:
     return DISCLAIMER + body
 
 
-def run_review(config: Config, github_client: GitHubClient, review_fn: ReviewFn) -> ReviewResult:
-    files = github_client.fetch_pr_files(config.pr_number)[: config.max_files]
-    all_filenames = [file["filename"] for file in files if file.get("filename")]
+def run_review(config: Config, vcs_provider: VCSProvider, review_fn: ReviewFn) -> ReviewResult:
+    files = vcs_provider.fetch_pr_files()[: config.max_files]
+    all_filenames = [file.filename for file in files]
     workspace_root = Path(config.workspace_root)
 
-    comments: list[ReviewComment] = []
+    comments: list[NormalizedComment] = []
     severity_counts = _zero_severity_counts()
     files_reviewed = 0
 
     for file in files:
-        patch = file.get("patch")
+        patch = file.patch
         if not patch:
             continue
 
-        filename = file["filename"]
-        commentable_lines = parse_patch(filename, patch).commentable_lines()
+        filename = file.filename
+        file_diff = parse_patch(filename, patch)
+        commentable_lines = file_diff.commentable_lines()
         diff_text = patch[: config.max_diff_chars]
         files_reviewed += 1
 
@@ -75,11 +76,11 @@ def run_review(config: Config, github_client: GitHubClient, review_fn: ReviewFn)
             if suggestion.line not in commentable_lines:
                 continue
             comments.append(
-                ReviewComment(
+                NormalizedComment(
                     path=filename,
                     line=suggestion.line,
-                    side="RIGHT",
                     body=f"**{suggestion.severity.upper()}**: {suggestion.comment}",
+                    old_line=file_diff.old_lineno_for(suggestion.line),
                 )
             )
             severity_counts[suggestion.severity] = severity_counts.get(suggestion.severity, 0) + 1
@@ -87,8 +88,7 @@ def run_review(config: Config, github_client: GitHubClient, review_fn: ReviewFn)
     if files_reviewed == 0:
         return ReviewResult(files_reviewed=0, comments_posted=0)
 
-    github_client.post_review(
-        config.pr_number,
+    vcs_provider.post_review(
         summary=_build_summary(files_reviewed, len(comments)),
         comments=comments,
     )

@@ -1,4 +1,4 @@
-"""Process entrypoint for the Claude PR reviewer GitHub Action."""
+"""Process entrypoint for the Claude PR reviewer — runs under GitHub Actions or GitLab CI."""
 
 import os
 import sys
@@ -7,9 +7,10 @@ import time
 import anthropic
 
 from ai_pr_reviewer.claude_client import review_file_diff
-from ai_pr_reviewer.config import ConfigError, load_config
+from ai_pr_reviewer.config import Config, ConfigError, load_config
 from ai_pr_reviewer.context_finder import RelatedFile
-from ai_pr_reviewer.github_client import GitHubClient, GitHubClientError
+from ai_pr_reviewer.github_client import GitHubClient, GitHubClientError, GitHubProvider
+from ai_pr_reviewer.gitlab_client import GitLabClient, GitLabClientError, GitLabProvider
 from ai_pr_reviewer.metrics import (
     build_metrics_record,
     render_step_summary,
@@ -17,6 +18,22 @@ from ai_pr_reviewer.metrics import (
     write_step_summary,
 )
 from ai_pr_reviewer.review_engine import ReviewResult, run_review
+from ai_pr_reviewer.vcs_provider import VCSProvider
+
+ProviderError = (GitHubClientError, GitLabClientError)
+
+
+def _build_provider(config: Config) -> VCSProvider:
+    if config.provider == "gitlab":
+        client = GitLabClient(
+            config.vcs_token,
+            f"{config.repo_owner}/{config.repo_name}",
+            base_url=config.gitlab_base_url,
+        )
+        return GitLabProvider(client, config.pr_number)
+
+    client = GitHubClient(config.vcs_token, config.repo_owner, config.repo_name)
+    return GitHubProvider(client, config.pr_number)
 
 
 def main() -> int:
@@ -26,7 +43,7 @@ def main() -> int:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
 
-    github_client = GitHubClient(config.github_token, config.repo_owner, config.repo_name)
+    vcs_provider = _build_provider(config)
     anthropic_client = anthropic.Anthropic(api_key=config.anthropic_api_key)
 
     def review_fn(filename: str, diff_text: str, related_files: list[RelatedFile]):
@@ -36,8 +53,8 @@ def main() -> int:
 
     started_at = time.monotonic()
     try:
-        result = run_review(config, github_client, review_fn)
-    except GitHubClientError as exc:
+        result = run_review(config, vcs_provider, review_fn)
+    except ProviderError as exc:
         duration_seconds = time.monotonic() - started_at
         failure_record = build_metrics_record(
             config,

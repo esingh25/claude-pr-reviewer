@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import requests
 
+from ai_pr_reviewer.vcs_provider import ChangedFile, NormalizedComment
+
 API_BASE = "https://api.github.com"
 PER_PAGE = 100
 REQUEST_TIMEOUT_SECONDS = 30
@@ -78,3 +80,21 @@ class GitHubClient:
         )
         self._raise_for_status(response)
         return response.json()
+
+
+class GitHubProvider:
+    """Adapts GitHubClient to the provider-agnostic VCSProvider interface."""
+
+    def __init__(self, client: GitHubClient, pr_number: int):
+        self._client = client
+        self._pr_number = pr_number
+
+    def fetch_pr_files(self) -> list[ChangedFile]:
+        raw_files = self._client.fetch_pr_files(self._pr_number)
+        return [ChangedFile(filename=f["filename"], patch=f.get("patch")) for f in raw_files]
+
+    def post_review(self, summary: str, comments: list[NormalizedComment]) -> dict:
+        github_comments = [
+            ReviewComment(path=c.path, line=c.line, side="RIGHT", body=c.body) for c in comments
+        ]
+        return self._client.post_review(self._pr_number, summary=summary, comments=github_comments)

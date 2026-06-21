@@ -13,7 +13,8 @@ from ai_pr_reviewer.review_engine import ReviewResult
 
 def _config():
     return Config(
-        github_token="gh-token",
+        provider="github",
+        vcs_token="gh-token",
         anthropic_api_key="anthropic-key",
         repo_owner="esingh25",
         repo_name="claude-pr-reviewer",
@@ -25,6 +26,7 @@ def _config():
         max_files=50,
         workspace_root=".",
         enable_cross_file_context=True,
+        gitlab_base_url="https://gitlab.com",
     )
 
 

@@ -55,3 +55,27 @@ def test_commentable_lines_excludes_removed_only_lines():
     file_diff = parse_patch("foo.py", patch)
 
     assert file_diff.commentable_lines() == {1}
+
+
+def test_old_lineno_for_returns_none_for_added_line():
+    patch = "@@ -1,1 +1,2 @@\n line1\n+added line"
+
+    file_diff = parse_patch("foo.py", patch)
+
+    assert file_diff.old_lineno_for(2) is None
+
+
+def test_old_lineno_for_returns_old_line_for_context_line():
+    patch = "@@ -1,3 +1,3 @@\n line1\n-removed\n+added\n line3"
+
+    file_diff = parse_patch("foo.py", patch)
+
+    assert file_diff.old_lineno_for(3) == 3
+
+
+def test_old_lineno_for_returns_none_for_unknown_line():
+    patch = "@@ -1,1 +1,1 @@\n line1"
+
+    file_diff = parse_patch("foo.py", patch)
+
+    assert file_diff.old_lineno_for(999) is None

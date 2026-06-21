@@ -6,8 +6,10 @@ import responses
 from ai_pr_reviewer.github_client import (
     GitHubClient,
     GitHubClientError,
+    GitHubProvider,
     ReviewComment,
 )
+from ai_pr_reviewer.vcs_provider import NormalizedComment, VCSProvider
 
 OWNER = "esingh25"
 REPO = "claude-pr-reviewer"
@@ -100,3 +102,58 @@ def test_post_review_raises_on_error_status(client):
 
     with pytest.raises(GitHubClientError, match="422"):
         client.post_review(PR_NUMBER, summary="x", comments=[])
+
+
+def test_github_provider_satisfies_vcs_provider_protocol(client):
+    provider = GitHubProvider(client, PR_NUMBER)
+
+    assert isinstance(provider, VCSProvider)
+
+
+@responses.activate
+def test_github_provider_fetch_pr_files_normalizes_to_changed_file(client):
+    responses.get(
+        f"https://api.github.com/repos/{OWNER}/{REPO}/pulls/{PR_NUMBER}/files",
+        json=[{"filename": "foo.py", "status": "modified", "patch": "@@ -1 +1 @@\n-a\n+b"}],
+        status=200,
+    )
+    provider = GitHubProvider(client, PR_NUMBER)
+
+    files = provider.fetch_pr_files()
+
+    assert len(files) == 1
+    assert files[0].filename == "foo.py"
+    assert files[0].patch == "@@ -1 +1 @@\n-a\n+b"
+
+
+@responses.activate
+def test_github_provider_fetch_pr_files_handles_missing_patch(client):
+    responses.get(
+        f"https://api.github.com/repos/{OWNER}/{REPO}/pulls/{PR_NUMBER}/files",
+        json=[{"filename": "image.png", "status": "added"}],
+        status=200,
+    )
+    provider = GitHubProvider(client, PR_NUMBER)
+
+    files = provider.fetch_pr_files()
+
+    assert files[0].patch is None
+
+
+@responses.activate
+def test_github_provider_post_review_maps_normalized_comments(client):
+    captured = responses.post(
+        f"https://api.github.com/repos/{OWNER}/{REPO}/pulls/{PR_NUMBER}/reviews",
+        json={"id": 1},
+        status=200,
+    )
+    provider = GitHubProvider(client, PR_NUMBER)
+    comments = [NormalizedComment(path="foo.py", line=3, body="nice catch")]
+
+    result = provider.post_review("Looks good.", comments)
+
+    assert result == {"id": 1}
+    sent_body = json.loads(captured.calls[0].request.body)
+    assert sent_body["comments"] == [
+        {"path": "foo.py", "line": 3, "side": "RIGHT", "body": "nice catch"}
+    ]
